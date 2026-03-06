@@ -64,3 +64,16 @@ void GenerateInitialGoL(int n, int rows, char** local_grid) {
 
     LOG("Exiting GenerateInitialGoL");
 }
+
+void free_grid(int n, int rows, int** local_grid) {
+    LOG("Entered free_grid rows=%d", rows);
+
+    for(int i = 0; i < rows; i++){
+        LOG("Freeing row %d", i);
+        free(local_grid[i]);
+    }
+
+    free(local_grid);
+
+    LOG("Exiting free_grid");
+}
