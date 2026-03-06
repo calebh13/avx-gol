@@ -1,0 +1,6 @@
+# ignore all files
+*
+# re-allow directories
+!*/
+# re-allow files with extensions
+!*.*
