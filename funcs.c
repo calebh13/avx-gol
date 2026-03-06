@@ -16,6 +16,64 @@ do { \
     } \
 } while(0)
 
-void GenerateInitialGoL(int n, int rows, int** local_grid) {
-    
+void GenerateInitialGoL(int n, int rows, char** local_grid) {
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &p);
+
+    char logname[64];
+    sprintf(logname, "log_p%d.txt", rank);
+    logfile = fopen(logname, "w");
+
+    LOG("Entered GenerateInitialGoL (n=%d rows=%d)", n, rows);
+
+    unsigned int seed;
+
+    if(rank == 0) {
+        LOG("Allocating seed array");
+        unsigned int *seeds = malloc(p * sizeof(unsigned int));
+
+        LOG("Generating seeds");
+        srand(12345);
+
+        for(int i = 0; i < p; i++) {
+            seeds[i] = rand() % BIGPRIME + 1;
+            LOG("Seed[%d]=%u", i, seeds[i]);
+        }
+
+        LOG("MPI_Scatter seeds");
+        MPI_Scatter(seeds, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+
+        free(seeds);
+        LOG("Freed seed array");
+    } 
+    else {
+        LOG("Waiting for MPI_Scatter seed");
+        MPI_Scatter(NULL, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+    }
+
+    LOG("Received seed %u", seed);
+
+    srand(seed);
+
+    LOG("Generating local grid");
+    for(int i = 0; i < rows; i++) {
+        for(int j = 0; j < n; j++){
+            local_grid[i][j] = rand() % 2 == 0;
+        }
+    }
+
+    LOG("Exiting GenerateInitialGoL");
+}
+
+void free_grid(int n, int rows, int** local_grid) {
+    LOG("Entered free_grid rows=%d", rows);
+
+    for(int i = 0; i < rows; i++){
+        LOG("Freeing row %d", i);
+        free(local_grid[i]);
+    }
+
+    free(local_grid);
+
+    LOG("Exiting free_grid");
 }
