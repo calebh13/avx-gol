@@ -4,3 +4,4 @@
 !*/
 # re-allow files with extensions
 !*.*
+.vscode/*
