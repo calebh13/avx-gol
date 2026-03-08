@@ -65,7 +65,7 @@ void GenerateInitialGoL(int n, int rows, char** local_grid) {
     LOG("Exiting GenerateInitialGoL");
 }
 
-void free_grid(int n, int rows, int** local_grid) {
+void free_grid(int n, int rows, char** local_grid) {
     LOG("Entered free_grid rows=%d", rows);
 
     for(int i = 0; i < rows; i++){
@@ -76,4 +76,35 @@ void free_grid(int n, int rows, int** local_grid) {
     free(local_grid);
 
     LOG("Exiting free_grid");
+}
+
+__m256i determine_state256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
+    printf("It got called\n");
+    LOG("Entering determine_state256");
+
+    LOG("Gathering HALO");
+    __m256i upper = _mm256_loadu_si256((const __m256i*) upper_arr);
+    __m256i lower = _mm256_loadu_si256((const __m256i*) lower_arr);
+
+    LOG("Gathering Sun Dogs");
+    __m256i left = _mm256_loadu_si256((const __m256i*) (middle_arr - 1));
+    __m256i right = _mm256_loadu_si256((const __m256i*) (middle_arr + 1));
+
+    LOG("Gathering NE / NW / SE / SW");
+    __m256i upperLeft = _mm256_loadu_si256((const __m256i*) (upper_arr - 1));
+    __m256i upperRight = _mm256_loadu_si256((const __m256i*) (upper_arr + 1));
+
+    __m256i lowerLeft = _mm256_loadu_si256((const __m256i*) (lower_arr - 1));
+    __m256i lowerRight = _mm256_loadu_si256((const __m256i*) (lower_arr + 1));
+
+    __m256i northSouthSum = _mm256_add_epi8(upper, lower);
+    __m256i eastWestSum = _mm256_add_epi8(left, right);
+    __m256i northeastNorthwestSum = _mm256_add_epi8(upperLeft, upperRight);
+    __m256i southeastSouthwestSum = _mm256_add_epi8(lowerLeft, lowerRight);
+
+    __m256i cardinalSums = _mm256_add_epi8(northSouthSum, eastWestSum);
+    __m256i diagonalSums = _mm256_add_epi8(northeastNorthwestSum, southeastSouthwestSum);
+
+    LOG("Exiting determine_state256");
+    return _mm256_add_epi8(cardinalSums, diagonalSums);
 }
