@@ -13,7 +13,7 @@
 void GenerateInitialGoL(int n, int rows, char** local_grid);
 void free_grid(int n, int rows, char** local_grid);
 
-__m256i determine_state256(
+__m256i calculate_neighbors256(
     const char* lower_arr,
     const char* middle_arr,
     const char* upper_arr);

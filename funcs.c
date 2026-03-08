@@ -1,6 +1,6 @@
 #include "funcs.h"
 
-#define BIGPRIME 2147483647UL
+#define BIGPRIME 85935431U
 #define OUTFILE_FORMAT "p%dout"
 
 int rank, p;
@@ -80,8 +80,10 @@ void free_grid(int n, int rows, char** local_grid) {
 
 /*
  * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
+ * That is, all the arrays must be at least length 34, and should be passed in as arr + 1.
+ * i.e, arr[-1] and arr[33] must be valid indices.
 */
-__m256i determine_state256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
+__m256i calculate_neighbors256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     printf("It got called\n");
     LOG("Entering determine_state256");
 
