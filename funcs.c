@@ -78,6 +78,9 @@ void free_grid(int n, int rows, char** local_grid) {
     LOG("Exiting free_grid");
 }
 
+/*
+ * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
+*/
 __m256i determine_state256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     printf("It got called\n");
     LOG("Entering determine_state256");
