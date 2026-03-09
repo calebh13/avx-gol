@@ -16,5 +16,6 @@ int main(int argc, char* argv[]) {
     
     assert(n > p && n % p == 0);
 
+    MPI_Finalize();
     return 0;
 }

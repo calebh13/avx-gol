@@ -84,7 +84,6 @@ void free_grid(int n, int rows, char** local_grid) {
  * i.e, arr[-1] and arr[33] must be valid indices.
 */
 __m256i calculate_neighbors256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
-    printf("It got called\n");
     LOG("Entering determine_state256");
 
     LOG("Gathering HALO");
@@ -123,4 +122,50 @@ __m256i determine_state256(__m256i neighbor_counts)
     __m256i le5 = _mm256_cmpgt_epi8(six, neighbor_counts); // 6 > v  → v <= 5
 
     return _mm256_and_si256(ge3, le5);
+}
+
+/*
+ * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
+ * That is, all the arrays must be at least length 18, and should be passed in as arr + 1.
+ * i.e, arr[-1] and arr[18] must be valid indices.
+*/
+__m128i calculate_neighbors128(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
+    LOG("Entering determine_state128");
+
+    LOG("Gathering HALO");
+    __m128i upper = _mm_loadu_si128((const __m128i*) upper_arr);
+    __m128i lower = _mm_loadu_si128((const __m128i*) lower_arr);
+
+    LOG("Gathering Sun Dogs");
+    __m128i left = _mm_loadu_si128((const __m128i*) (middle_arr - 1));
+    __m128i right = _mm_loadu_si128((const __m128i*) (middle_arr + 1));
+
+    LOG("Gathering NE / NW / SE / SW");
+    __m128i upperLeft = _mm_loadu_si128((const __m128i*) (upper_arr - 1));
+    __m128i upperRight = _mm_loadu_si128((const __m128i*) (upper_arr + 1));
+
+    __m128i lowerLeft = _mm_loadu_si128((const __m128i*) (lower_arr - 1));
+    __m128i lowerRight = _mm_loadu_si128((const __m128i*) (lower_arr + 1));
+
+    __m128i northSouthSum = _mm_add_epi8(upper, lower);
+    __m128i eastWestSum = _mm_add_epi8(left, right);
+    __m128i northeastNorthwestSum = _mm_add_epi8(upperLeft, upperRight);
+    __m128i southeastSouthwestSum = _mm_add_epi8(lowerLeft, lowerRight);
+
+    __m128i cardinalSums = _mm_add_epi8(northSouthSum, eastWestSum);
+    __m128i diagonalSums = _mm_add_epi8(northeastNorthwestSum, southeastSouthwestSum);
+
+    LOG("Exiting determine_state128");
+    return _mm_add_epi8(cardinalSums, diagonalSums);
+}
+
+__m128i determine_state128(__m128i neighbor_counts)
+{
+    __m128i two = _mm_set1_epi8(2);
+    __m128i six = _mm_set1_epi8(6);
+
+    __m128i ge3 = _mm_cmpgt_epi8(neighbor_counts, two); // v > 2  → v >= 3
+    __m128i le5 = _mm_cmpgt_epi8(six, neighbor_counts); // 6 > v  → v <= 5
+
+    return _mm_and_si128(ge3, le5);
 }
