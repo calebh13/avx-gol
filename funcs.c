@@ -113,3 +113,14 @@ __m256i calculate_neighbors256(const char* lower_arr, const char* middle_arr, co
     LOG("Exiting determine_state256");
     return _mm256_add_epi8(cardinalSums, diagonalSums);
 }
+
+__m256i determine_state256(__m256i neighbor_counts)
+{
+    __m256i two = _mm256_set1_epi8(2);
+    __m256i six = _mm256_set1_epi8(6);
+
+    __m256i ge3 = _mm256_cmpgt_epi8(neighbor_counts, two); // v > 2  → v >= 3
+    __m256i le5 = _mm256_cmpgt_epi8(six, neighbor_counts); // 6 > v  → v <= 5
+
+    return _mm256_and_si256(ge3, le5);
+}

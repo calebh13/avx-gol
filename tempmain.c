@@ -1,4 +1,5 @@
 #include "funcs.h"
+#include <immintrin.h>
 
 #define SIZE 34
 
@@ -48,9 +49,10 @@ int main(int argc, char* argv[]) {
 
     printf("\n");
 
-    __m256i res = calculate_neighbors256(lower + 1, middle + 1, upper + 1);
+    __m256i neighbor_counts = calculate_neighbors256(lower + 1, middle + 1, upper + 1);
+    __m256i states = determine_state256(neighbor_counts);
 
-    char* sums = (char*) &res;
+    char* sums = (char*) &neighbor_counts;
 
     printf("\n ");
     for(int i = 0; i < 32; i++){
@@ -58,8 +60,15 @@ int main(int argc, char* argv[]) {
     }
     printf("\n");
 
-    // now we need to calculate the sun dog manually, I think?
+    char* state_chars = (char*) &states;
+
+    printf("\n ");
+    for(int i = 0; i < 32; i++){
+        printf("%c", !!state_chars[i] + 48);
+    }
+    printf("\n");
     
+    // now we need to calculate the sun dogs manually
 
     MPI_Finalize();
     return 0;

@@ -18,4 +18,8 @@ __m256i calculate_neighbors256(
     const char* middle_arr,
     const char* upper_arr);
 
+__m256i determine_state256(
+    __m256i neighbor_counts
+);
+
 #endif
