@@ -1,22 +1,12 @@
 #include "funcs.h"
 
-#define BIGPRIME 85935431U
-#define OUTFILE_FORMAT "p%dout"
-
 int rank, p;
 FILE* logfile;
 
-#define LOG(...) \
-do { \
-    if(logfile){ \
-        fprintf(logfile, "p%d: ", rank); \
-        fprintf(logfile, __VA_ARGS__); \
-        fprintf(logfile, "\n"); \
-        fflush(logfile); \
-    } \
-} while(0)
-
 void GenerateInitialGoL(int n, int rows, char** local_grid) {
+
+    // todo move the logging stuff to some other file
+    // pass in grid argument instead, figure out who has responsibility for allocating and stuff
 
     char logname[64];
     sprintf(logname, "log_p%d.txt", rank);

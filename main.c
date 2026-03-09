@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <mpi.h>
 #include <assert.h>
+#include "funcs.h"
 
 int main(int argc, char* argv[]) {
     printf("Hello World\n");
@@ -10,7 +11,6 @@ int main(int argc, char* argv[]) {
     const int n = 16;
     const int G = 2;
 
-    int rank, p;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &p);
     

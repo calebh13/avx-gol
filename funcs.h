@@ -10,6 +10,29 @@
 #include <stdint.h>
 #include <assert.h>
 
+extern int rank, p;
+extern FILE* logfile;
+
+#define LOG(...) \
+do { \
+    if(logfile){ \
+        fprintf(logfile, "p%d: ", rank); \
+        fprintf(logfile, __VA_ARGS__); \
+        fprintf(logfile, "\n"); \
+        fflush(logfile); \
+    } \
+} while(0)
+
+#define BIGPRIME 85935431U
+#define OUTFILE_FORMAT "p%dout"
+
+typedef struct {
+    char** grid;
+    size_t n;
+    size_t rows;
+} Grid;
+
+Grid* init_grid(int n, int rows);
 void GenerateInitialGoL(int n, int rows, char** local_grid);
 void free_grid(int n, int rows, char** local_grid);
 
