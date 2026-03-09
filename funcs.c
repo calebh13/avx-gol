@@ -1,80 +1,175 @@
 #include "funcs.h"
+#include <mpi.h>
 
-int rank, p;
-FILE* logfile;
+struct Grid {
+    char** grid;
+    size_t n;
+    size_t rows;
+};
 
-void GenerateInitialGoL(int n, int rows, char** local_grid) {
+Grid* init_grid(int n, int rows)
+{
+    LOG("Entered init_grid");
+    Grid* grid = malloc(sizeof(Grid));
+    if (!grid) return NULL;
+    LOG("malloc'd grid");
+    grid->grid = malloc(rows * sizeof(char*));
+    if (!grid->grid) return NULL;
+    LOG("malloc'd grid->grid");
+    for (int i = 0; i < rows; i++) {
+        grid->grid[i] = malloc(n * sizeof(char));
+        if (!grid->grid[i]) return NULL;
+        // LOG("malloc'd grid->grid[%d]", i);
+    }
 
-    // todo move the logging stuff to some other file
-    // pass in grid argument instead, figure out who has responsibility for allocating and stuff
+    grid->n = n;
+    grid->rows = rows;
+    LOG("successfully initialized grid");
+    return grid;
+}
 
-    char logname[64];
-    sprintf(logname, "log_p%d.txt", rank);
-    logfile = fopen(logname, "w");
-
-    LOG("Entered GenerateInitialGoL (n=%d rows=%d)", n, rows);
-
+void scatter_seeds()
+{
     unsigned int seed;
 
-    if(rank == 0) {
+    if (rank == 0) {
         LOG("Allocating seed array");
         unsigned int *seeds = malloc(p * sizeof(unsigned int));
 
         LOG("Generating seeds");
         srand(12345);
 
-        for(int i = 0; i < p; i++) {
+        for (int i = 0; i < p; i++) {
             seeds[i] = rand() % BIGPRIME + 1;
             LOG("Seed[%d]=%u", i, seeds[i]);
         }
 
         LOG("MPI_Scatter seeds");
-        MPI_Scatter(seeds, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+        MPI_Scatter(seeds, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0,
+                MPI_COMM_WORLD);
 
         free(seeds);
         LOG("Freed seed array");
-    } 
-    else {
+    } else {
         LOG("Waiting for MPI_Scatter seed");
-        MPI_Scatter(NULL, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+        MPI_Scatter(NULL, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0,
+                MPI_COMM_WORLD);
     }
 
     LOG("Received seed %u", seed);
 
     srand(seed);
+}
+
+void GenerateInitialGoL(Grid* local_grid) 
+{
+    LOG("Entered GenerateInitialGoL (n=%zu rows=%zu)", local_grid->n, local_grid->rows);
+
+    scatter_seeds();
 
     LOG("Generating local grid");
-    for(int i = 0; i < rows; i++) {
-        for(int j = 0; j < n; j++){
-            local_grid[i][j] = rand() % 2 == 0;
+    for(int i = 0; i < local_grid->rows; i++) {
+        for(int j = 0; j < local_grid->n; j++){
+            local_grid->grid[i][j] = rand() % 2 == 0;
         }
     }
 
     LOG("Exiting GenerateInitialGoL");
 }
 
-void free_grid(int n, int rows, char** local_grid) {
-    LOG("Entered free_grid rows=%d", rows);
+void free_grid(Grid* local_grid) {
+    LOG("Entered free_grid rows=%zu", local_grid->rows);
 
-    for(int i = 0; i < rows; i++){
+    for(int i = 0; i < local_grid->rows; i++){
         LOG("Freeing row %d", i);
-        free(local_grid[i]);
+        free(local_grid->grid[i]);
     }
 
+    free(local_grid->grid);
     free(local_grid);
 
     LOG("Exiting free_grid");
 }
 
-/// @brief Simulates a game of life for the generations and size specified
-/// @param n number of elements
-/// @param rows number of rows
-/// @param g number of generations
-void simulate(int n, int g){
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &p);
+// User must call MPI_Wait on send_req and recv_req before attempting to use the relevant buffers
+// This is not critical for the send buffer (so long as it isn't freed), but is extremely important for the recv buffer
+static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* send_req, MPI_Request* recv_req)
+{
+    LOG("Entered sendLowerRecvUpper");
 
-    assert(n > p && n % p == 0);
+    MPI_Request req;
+
+    int send_target = (rank + 1) % p;
+    int recv_source = (rank + p - 1) % p;
+
+    LOG("MPI_Isend lower row -> p%d", send_target);
+
+    MPI_Isend(
+        local_grid->grid[local_grid->rows - 1],
+        local_grid->n,
+        MPI_CHAR,
+        send_target,
+        0,
+        MPI_COMM_WORLD,
+        send_req
+    );
+
+    LOG("MPI_Recv upper row <- p%d", recv_source);
+
+    MPI_Irecv(
+        upper_row,
+        local_grid->n,
+        MPI_CHAR,
+        recv_source,
+        MPI_ANY_TAG,
+        MPI_COMM_WORLD,
+        recv_req
+    );
+
+    LOG("Exiting sendLowerRecvUpper");
+}
+
+// User must call MPI_Wait on send_req and recv_req before attempting to use the relevant buffers
+// This is not critical for the send buffer (so long as it isn't freed), but is extremely important for the recv buffer
+static void sendUpperRecvLower(Grid* local_grid, int* lower_row, MPI_Request* send_req, MPI_Request* recv_req)
+{
+    LOG("Entered sendUpperRecvLower");
+
+    MPI_Request req;
+
+    int send_target = (rank + p - 1) % p;
+    int recv_source = (rank + 1) % p;
+
+    LOG("MPI_Isend upper row -> p%d", send_target);
+
+    MPI_Isend(
+        local_grid->grid[0],
+        local_grid->n,
+        MPI_CHAR,
+        send_target,
+        0,
+        MPI_COMM_WORLD,
+        send_req
+    );
+
+    LOG("MPI_Irecv lower row <- p%d", recv_source);
+
+    MPI_Irecv(
+        lower_row,
+        local_grid->n,
+        MPI_CHAR,
+        recv_source,
+        MPI_ANY_TAG,
+        MPI_COMM_WORLD,
+        recv_req
+    );
+
+    LOG("Exiting sendUpperRecvLower");
+}
+
+/// @brief Simulates a game of life for the generations and size specified
+/// @param g number of generations
+void simulate(Grid* local_grid, int g){
     assert(g > 0);
     /*
     Step 1: Generate the initial game of life
@@ -159,8 +254,8 @@ __m256i determine_state256(__m256i neighbor_counts)
     __m256i two = _mm256_set1_epi8(2);
     __m256i six = _mm256_set1_epi8(6);
 
-    __m256i ge3 = _mm256_cmpgt_epi8(neighbor_counts, two); // v > 2  → v >= 3
-    __m256i le5 = _mm256_cmpgt_epi8(six, neighbor_counts); // 6 > v  → v <= 5
+    __m256i ge3 = _mm256_cmpgt_epi8(neighbor_counts, two); // v > 2 -> v >= 3
+    __m256i le5 = _mm256_cmpgt_epi8(six, neighbor_counts); // 6 > v -> v <= 5
 
     return _mm256_and_si256(ge3, le5);
 }

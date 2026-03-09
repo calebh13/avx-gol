@@ -5,3 +5,4 @@
 # re-allow files with extensions
 !*.*
 .vscode/*
+log_p*.txt
