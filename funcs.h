@@ -22,4 +22,11 @@ __m256i determine_state256(
     __m256i neighbor_counts
 );
 
+__m128i calculate_neighbors128(
+    const char* lower_arr, 
+    const char* middle_arr, 
+    const char* upper_arr);
+    
+__m128i determine_state128(__m128i neighbor_counts);
+
 #endif
