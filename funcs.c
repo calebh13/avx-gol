@@ -17,8 +17,6 @@ do { \
 } while(0)
 
 void GenerateInitialGoL(int n, int rows, char** local_grid) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &p);
 
     char logname[64];
     sprintf(logname, "log_p%d.txt", rank);
@@ -76,6 +74,59 @@ void free_grid(int n, int rows, char** local_grid) {
     free(local_grid);
 
     LOG("Exiting free_grid");
+}
+
+/// @brief Simulates a game of life for the generations and size specified
+/// @param n number of elements
+/// @param rows number of rows
+/// @param g number of generations
+void simulate(int n, int g){
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &p);
+
+    assert(n > p && n % p == 0);
+    assert(g > 0);
+    /*
+    Step 1: Generate the initial game of life
+        -Determine and validate the number of rows going to each process
+        -Allocate an array for this process' local_grid to go
+        -Allocate an array for this process' output_grid to go
+    */
+
+    /*
+    Step 2: ISend and Irecieve HALO
+        -Isend the information required to the proper process
+        -Irecieve the information required to the proper process
+        -Save the request references somewhere so that we can wait on them later
+    */
+
+    /*
+    Step 3: Calculate all of the vectorizable cells for current row
+        -Move in 512 bit windows, then 256, then 128, then . . . 
+        -Make sure to save the sundogs for a row somewhere for easy calcs later
+    */
+
+    /*
+    Step 4: Calculate the sun dogs for current row
+        -Use the information from the vector calculations to determine the values for sun dogs
+    */
+
+    /*
+    Step 5: Repeat 3-4 until done with non-HALO rows
+    */
+
+    /*
+    Step 6: Calculate HALO rows
+        -Wait on the earlier requests to ensure info has been recieved
+        -Manually create upper middle and lower rows
+        -Manually call the determine state stuff
+    */
+
+    /*
+    Step 7: Output
+        -Print to file -- as needed --
+        - Swap grid references
+    */
 }
 
 /*
