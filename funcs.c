@@ -97,8 +97,6 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
 {
     LOG("Entered sendLowerRecvUpper");
 
-    MPI_Request req;
-
     int send_target = (rank + 1) % p;
     int recv_source = (rank + p - 1) % p;
 
@@ -134,8 +132,6 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
 static void sendUpperRecvLower(Grid* local_grid, int* lower_row, MPI_Request* send_req, MPI_Request* recv_req)
 {
     LOG("Entered sendUpperRecvLower");
-
-    MPI_Request req;
 
     int send_target = (rank + p - 1) % p;
     int recv_source = (rank + 1) % p;
@@ -215,6 +211,9 @@ void simulate(Grid* local_grid, int g){
 }
 
 /*
+ * AVX2: returns a 256-bit integer with 1-byte sums representing the number of neighbors of the 
+ * corresponding cell in middle_arr. 
+ * 
  * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
  * That is, all the arrays must be at least length 34, and should be passed in as arr + 1.
  * i.e, arr[-1] and arr[33] must be valid indices.
@@ -249,6 +248,8 @@ __m256i calculate_neighbors256(const char* lower_arr, const char* middle_arr, co
     return _mm256_add_epi8(cardinalSums, diagonalSums);
 }
 
+/* AVX2: compute mask for 3 <= neighbor_count <= 5 (Game of Life rule).
+ * Returns 0xFF per byte if cell should be alive (i.e. it satisfies the condition), otherwise 0x00. */
 __m256i determine_state256(__m256i neighbor_counts)
 {
     __m256i two = _mm256_set1_epi8(2);
@@ -260,11 +261,7 @@ __m256i determine_state256(__m256i neighbor_counts)
     return _mm256_and_si256(ge3, le5);
 }
 
-/*
- * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
- * That is, all the arrays must be at least length 18, and should be passed in as arr + 1.
- * i.e, arr[-1] and arr[18] must be valid indices.
-*/
+// See calculate_neighbors256
 __m128i calculate_neighbors128(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     LOG("Entering determine_state128");
 
@@ -295,6 +292,7 @@ __m128i calculate_neighbors128(const char* lower_arr, const char* middle_arr, co
     return _mm_add_epi8(cardinalSums, diagonalSums);
 }
 
+// See determine_state256
 __m128i determine_state128(__m128i neighbor_counts)
 {
     __m128i two = _mm_set1_epi8(2);
