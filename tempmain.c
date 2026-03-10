@@ -1,75 +1,54 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <mpi.h>
 #include "funcs.h"
-#include <immintrin.h>
 
-#define SIZE 34
-
-void fill_random01(char *arr) {
-    for (int i = 0; i < SIZE; i++) {
-        arr[i] = rand() % 2;   // 0 or 1
-    }
-}
+int rank = 0;
+int p = 1;
+FILE* logfile;
 
 
-int main(int argc, char* argv[]) {
-    printf("Hello World\n");
-    
+int main(int argc, char** argv)
+{
     MPI_Init(&argc, &argv);
-
-    const int n = 16;
-    const int G = 2;
-
-    int rank, p;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &p);
-    
-    assert(n > p && n % p == 0);
-    char upper[SIZE];
-    char middle[SIZE];
-    char lower[SIZE];
 
-    srand(12345);
+    int n = 65536;
+    int rows = 65536;
+    int generations = 10;
 
-    fill_random01(upper);
-    fill_random01(middle);
-    fill_random01(lower);
+    char logname[64];
+    sprintf(logname, "log_p%d.txt", rank);
+    logfile = fopen(logname, "w");
 
-    for(int i = 0; i < SIZE; i++){
-        printf("%c", upper[i] + 48);
+
+    if (argc >= 3) {
+        n = atoi(argv[1]);
+        rows = atoi(argv[2]);
     }
 
-    printf("\n");
-    for(int i = 0; i < SIZE; i++){
-        printf("%c", middle[i] + 48);
+    if (argc >= 4) {
+        generations = atoi(argv[3]);
     }
 
-    printf("\n");
-    for(int i = 0; i < SIZE; i++){
-        printf("%c", lower[i] + 48);
+    if (rank == 0) {
+        printf("Grid size: %d x %d\n", rows, n);
+        printf("Generations: %d\n\n", generations);
     }
 
-    printf("\n");
+    Grid* grid = init_grid(n, rows);
 
-    __m256i neighbor_counts = calculate_neighbors256(lower + 1, middle + 1, upper + 1);
-    __m256i states = determine_state256(neighbor_counts);
+    GenerateInitialGoL(grid);
 
-    char* sums = (char*) &neighbor_counts;
-
-    printf("\n ");
-    for(int i = 0; i < 32; i++){
-        printf("%c", sums[i]  + 48);
+    if (rank == 0) {
+        printf("Initial Grid:\n");
+        //print_grid(grid, NULL);
     }
-    printf("\n");
 
-    char* state_chars = (char*) &states;
-
-    printf("\n ");
-    for(int i = 0; i < 32; i++){
-        printf("%c", !!state_chars[i] + 48);
-    }
-    printf("\n");
-    
-    // now we need to calculate the sun dogs manually
+    simulate(grid, generations);
 
     MPI_Finalize();
     return 0;
 }
+

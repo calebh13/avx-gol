@@ -28,6 +28,20 @@ Grid* init_grid(int n, int rows)
     return grid;
 }
 
+void print_grid(const Grid* g, FILE* out) {
+    if (!out) out = stdout;  // default to stdout if NULL
+
+    LOG("Entered Print_grid");
+    for (size_t r = 0; r < g->rows; r++) {
+        for (size_t c = 0; c < g->n; c++) {
+            fprintf(out, "%d ", g->grid[r][c]);
+        }
+        fprintf(out, "\n");
+    }
+    fprintf(out, "\n");
+    LOG("Exiting Print_Grid");
+}
+
 void scatter_seeds()
 {
     unsigned int seed;
@@ -112,7 +126,7 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
         send_req
     );
 
-    LOG("MPI_Recv upper row <- p%d", recv_source);
+    LOG("MPI_Irecv upper row <- p%d", recv_source);
 
     MPI_Irecv(
         upper_row,
@@ -129,7 +143,7 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
 
 // User must call MPI_Wait on send_req and recv_req before attempting to use the relevant buffers
 // This is not critical for the send buffer (so long as it isn't freed), but is extremely important for the recv buffer
-static void sendUpperRecvLower(Grid* local_grid, int* lower_row, MPI_Request* send_req, MPI_Request* recv_req)
+static void sendUpperRecvLower(Grid* local_grid, char* lower_row, MPI_Request* send_req, MPI_Request* recv_req)
 {
     LOG("Entered sendUpperRecvLower");
 
@@ -163,143 +177,361 @@ static void sendUpperRecvLower(Grid* local_grid, int* lower_row, MPI_Request* se
     LOG("Exiting sendUpperRecvLower");
 }
 
-/// @brief Simulates a game of life for the generations and size specified
-/// @param g number of generations
-void simulate(Grid* local_grid, int g){
-    assert(g > 0);
-    /*
-    Step 1: Generate the initial game of life
-        -Determine and validate the number of rows going to each process
-        -Allocate an array for this process' local_grid to go
-        -Allocate an array for this process' output_grid to go
-    */
+void simulate(Grid* local_grid, int g) {
+    LOG("Entering simulate");
+    assert(g >= 0);
 
-    /*
-    Step 2: ISend and Irecieve HALO
-        -Isend the information required to the proper process
-        -Irecieve the information required to the proper process
-        -Save the request references somewhere so that we can wait on them later
-    */
+    LOG("Calculating block sizes");
+    int blocks_256 = (local_grid->n - 2) / 32;
+    int remainder = (local_grid->n - 2) % 32;
+    int blocks_128 = remainder / 16;
+    int blocks_1 = remainder % 16;
 
-    /*
-    Step 3: Calculate all of the vectorizable cells for current row
-        -Move in 512 bit windows, then 256, then 128, then . . . 
-        -Make sure to save the sundogs for a row somewhere for easy calcs later
-    */
+    LOG("Allocating HALO buffers and MPI requests");
+    char* upper_HALO = malloc(sizeof(char) * local_grid->n);
+    char* lower_HALO = malloc(sizeof(char) * local_grid->n);
+    MPI_Request upper_send, upper_recv, lower_send, lower_recv;
 
-    /*
-    Step 4: Calculate the sun dogs for current row
-        -Use the information from the vector calculations to determine the values for sun dogs
-    */
+    LOG("Initializing output grid and output file");
+    Grid* output_grid = init_grid(local_grid->n, local_grid->rows);
 
-    /*
-    Step 5: Repeat 3-4 until done with non-HALO rows
-    */
+    char logname[64];
+    sprintf(logname, "out_p%d", rank);
+    FILE* outfile = fopen(logname, "w");
 
-    /*
-    Step 6: Calculate HALO rows
-        -Wait on the earlier requests to ensure info has been recieved
-        -Manually create upper middle and lower rows
-        -Manually call the determine state stuff
-    */
 
-    /*
-    Step 7: Output
-        -Print to file -- as needed --
-        - Swap grid references
-    */
+    for(int current_gen = 0; current_gen < g; current_gen++) {
+        MPI_Barrier(MPI_COMM_WORLD);
+        LOG("Starting generation %d", current_gen);
+
+        LOG("Posting HALO sends/receives");
+        sendLowerRecvUpper(local_grid, upper_HALO, &lower_send, &upper_recv);
+        sendUpperRecvLower(local_grid, lower_HALO, &upper_send, &lower_recv);
+
+        LOG("Calculating interior rows");
+        for(int row = 1; row < local_grid->rows - 1; row++) {
+            LOG("Processing row %d", row);
+            char* upper_row = local_grid->grid[row-1] + 1;
+            char* middle_row = local_grid->grid[row] + 1;
+            char* lower_row = local_grid->grid[row + 1] + 1;
+            char* output_row = output_grid->grid[row] + 1;
+
+            output_grid->grid[row][0] = determine_state1_manual_rows(
+                local_grid->grid[row - 1],
+                local_grid->grid[row],
+                local_grid->grid[row + 1],
+                local_grid->n,
+                0
+            );
+
+            output_grid->grid[row][local_grid->n - 1] = determine_state1_manual_rows(
+                local_grid->grid[row - 1],
+                local_grid->grid[row],
+                local_grid->grid[row + 1],
+                local_grid->n,
+                local_grid->n - 1
+            );
+
+            LOG("Processing 256-bit blocks");
+            for(int i = 0; i < blocks_256; i++) {
+                _mm256_storeu_si256(
+                    (__m256i*)output_row, 
+                    determine_state256(
+                        lower_row,
+                        middle_row,
+                        upper_row
+                    )
+                );
+                upper_row += 32;
+                middle_row += 32;
+                lower_row += 32;
+                output_row += 32;
+            }
+
+            LOG("Processing 128-bit blocks");
+            for(int i = 0; i < blocks_128; i++) {
+                _mm_storeu_si128(
+                    (__m128i*)output_row, 
+                    determine_state128(
+                        lower_row,
+                        middle_row,
+                        upper_row
+                    )
+                );
+                upper_row += 16;
+                middle_row += 16;
+                lower_row += 16;
+                output_row += 16;
+            }
+
+            LOG("Processing remaining scalar cells");
+            for(int i = 0; i < blocks_1; i++) {
+                *output_row = determine_state1(
+                    lower_row,
+                    middle_row,
+                    upper_row
+                );
+                upper_row += 1;
+                middle_row += 1;
+                lower_row += 1;
+                output_row += 1;
+            }
+        }
+
+        LOG("Waiting on HALO MPI requests");
+        MPI_Wait(&upper_send, MPI_STATUS_IGNORE);
+        MPI_Wait(&lower_send, MPI_STATUS_IGNORE);
+        MPI_Wait(&upper_recv, MPI_STATUS_IGNORE);
+        MPI_Wait(&lower_recv, MPI_STATUS_IGNORE);
+
+        // Calculate top HALO row
+        calculate_row(
+            upper_HALO,        // received from the process above
+            local_grid->grid[0], // middle row (first row)
+            local_grid->grid[1], // lower row
+            output_grid->grid[0],
+            local_grid->n,
+            blocks_256,
+            blocks_128,
+            blocks_1
+        );
+
+        // Calculate bottom HALO row
+        calculate_row(
+            local_grid->grid[local_grid->rows-2], // upper row
+            local_grid->grid[local_grid->rows-1], // middle row (last row)
+            lower_HALO,                           // received from the process below
+            output_grid->grid[local_grid->rows-1],
+            local_grid->n,
+            blocks_256,
+            blocks_128,
+            blocks_1
+        );
+
+        LOG("Swapping grids for next generation");
+        Grid* temp = local_grid;
+        local_grid = output_grid;
+        output_grid = temp;
+
+        LOG("Printing current generation to file");
+        print_grid(local_grid, outfile);
+
+        LOG("Finished generation %d", current_gen);
+    }
+
+    if (rank == 0) {
+        printf("Final Grid:\n");
+        //print_grid(output_grid, NULL);
+    }
+
+    LOG("Cleaning up resources");
+    fclose(outfile);
+    free(upper_HALO);
+    free(lower_HALO);
+    free_grid(output_grid);
+    free_grid(local_grid);
+
+    LOG("Exiting simulate");
+}
+
+
+
+/*
+ * AVX2: compute mask for 3 <= neighbor_count <= 5.
+ * Returns 0x01 per byte if cell should be alive, otherwise 0x00.
+ *
+ * Must not be called on a boundary element.
+ * Arrays must be length ≥ 34 and passed as arr + 1.
+ */
+__m256i determine_state256(const char* lower_arr, const char* middle_arr, const char* upper_arr)
+{
+    LOG("Entering determine_state256");
+
+    __m256i sum = _mm256_setzero_si256();
+
+    LOG("Load vertical neighbors");
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)upper_arr));
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)lower_arr));
+
+    LOG("Load horizontal neighbors");
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(middle_arr - 1)));
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(middle_arr + 1)));
+
+    LOG("Load diagonal neighbors");
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(upper_arr - 1)));
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(upper_arr + 1)));
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(lower_arr - 1)));
+    sum = _mm256_add_epi8(sum, _mm256_loadu_si256((const __m256i*)(lower_arr + 1)));
+
+    LOG("Applying rule");
+
+    const __m256i two = _mm256_set1_epi8(2);
+    const __m256i six = _mm256_set1_epi8(6);
+    const __m256i one = _mm256_set1_epi8(1);
+
+    __m256i ge3 = _mm256_cmpgt_epi8(sum, two);  // sum >= 3
+    __m256i le5 = _mm256_cmpgt_epi8(six, sum);  // sum <= 5
+
+    LOG("Exiting determine_state256");
+    return _mm256_and_si256(_mm256_and_si256(ge3, le5), one);
 }
 
 /*
- * AVX2: returns a 256-bit integer with 1-byte sums representing the number of neighbors of the 
- * corresponding cell in middle_arr. 
- * 
- * Must not be called on an element on the boundary (far left/right columns, or top/bottom rows)
- * That is, all the arrays must be at least length 34, and should be passed in as arr + 1.
- * i.e, arr[-1] and arr[33] must be valid indices.
-*/
-__m256i calculate_neighbors256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
-    LOG("Entering determine_state256");
-
-    LOG("Gathering HALO");
-    __m256i upper = _mm256_loadu_si256((const __m256i*) upper_arr);
-    __m256i lower = _mm256_loadu_si256((const __m256i*) lower_arr);
-
-    LOG("Gathering Sun Dogs");
-    __m256i left = _mm256_loadu_si256((const __m256i*) (middle_arr - 1));
-    __m256i right = _mm256_loadu_si256((const __m256i*) (middle_arr + 1));
-
-    LOG("Gathering NE / NW / SE / SW");
-    __m256i upperLeft = _mm256_loadu_si256((const __m256i*) (upper_arr - 1));
-    __m256i upperRight = _mm256_loadu_si256((const __m256i*) (upper_arr + 1));
-
-    __m256i lowerLeft = _mm256_loadu_si256((const __m256i*) (lower_arr - 1));
-    __m256i lowerRight = _mm256_loadu_si256((const __m256i*) (lower_arr + 1));
-
-    __m256i northSouthSum = _mm256_add_epi8(upper, lower);
-    __m256i eastWestSum = _mm256_add_epi8(left, right);
-    __m256i northeastNorthwestSum = _mm256_add_epi8(upperLeft, upperRight);
-    __m256i southeastSouthwestSum = _mm256_add_epi8(lowerLeft, lowerRight);
-
-    __m256i cardinalSums = _mm256_add_epi8(northSouthSum, eastWestSum);
-    __m256i diagonalSums = _mm256_add_epi8(northeastNorthwestSum, southeastSouthwestSum);
-
-    LOG("Exiting determine_state256");
-    return _mm256_add_epi8(cardinalSums, diagonalSums);
-}
-
-/* AVX2: compute mask for 3 <= neighbor_count <= 5 (Game of Life rule).
- * Returns 0xFF per byte if cell should be alive (i.e. it satisfies the condition), otherwise 0x00. */
-__m256i determine_state256(__m256i neighbor_counts)
+ * SSE2: compute mask for 3 <= neighbor_count <= 5.
+ * Returns 0x01 per byte if cell should be alive, otherwise 0x00.
+ *
+ * Must not be called on a boundary element.
+ * Arrays must be length ≥ 18 and passed as arr + 1.
+ */
+__m128i determine_state128(const char* lower_arr, const char* middle_arr, const char* upper_arr)
 {
-    __m256i two = _mm256_set1_epi8(2);
-    __m256i six = _mm256_set1_epi8(6);
-
-    __m256i ge3 = _mm256_cmpgt_epi8(neighbor_counts, two); // v > 2 -> v >= 3
-    __m256i le5 = _mm256_cmpgt_epi8(six, neighbor_counts); // 6 > v -> v <= 5
-
-    return _mm256_and_si256(ge3, le5);
-}
-
-// See calculate_neighbors256
-__m128i calculate_neighbors128(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     LOG("Entering determine_state128");
 
-    LOG("Gathering HALO");
-    __m128i upper = _mm_loadu_si128((const __m128i*) upper_arr);
-    __m128i lower = _mm_loadu_si128((const __m128i*) lower_arr);
+    __m128i sum = _mm_setzero_si128();
 
-    LOG("Gathering Sun Dogs");
-    __m128i left = _mm_loadu_si128((const __m128i*) (middle_arr - 1));
-    __m128i right = _mm_loadu_si128((const __m128i*) (middle_arr + 1));
+    LOG("Load vertical neighbors");
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)upper_arr));
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)lower_arr));
 
-    LOG("Gathering NE / NW / SE / SW");
-    __m128i upperLeft = _mm_loadu_si128((const __m128i*) (upper_arr - 1));
-    __m128i upperRight = _mm_loadu_si128((const __m128i*) (upper_arr + 1));
+    LOG("Load horizontal neighbors");
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(middle_arr - 1)));
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(middle_arr + 1)));
 
-    __m128i lowerLeft = _mm_loadu_si128((const __m128i*) (lower_arr - 1));
-    __m128i lowerRight = _mm_loadu_si128((const __m128i*) (lower_arr + 1));
+    LOG("Load diagonal neighbors");
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(upper_arr - 1)));
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(upper_arr + 1)));
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(lower_arr - 1)));
+    sum = _mm_add_epi8(sum, _mm_loadu_si128((const __m128i*)(lower_arr + 1)));
 
-    __m128i northSouthSum = _mm_add_epi8(upper, lower);
-    __m128i eastWestSum = _mm_add_epi8(left, right);
-    __m128i northeastNorthwestSum = _mm_add_epi8(upperLeft, upperRight);
-    __m128i southeastSouthwestSum = _mm_add_epi8(lowerLeft, lowerRight);
+    LOG("Applying rule");
 
-    __m128i cardinalSums = _mm_add_epi8(northSouthSum, eastWestSum);
-    __m128i diagonalSums = _mm_add_epi8(northeastNorthwestSum, southeastSouthwestSum);
+    const __m128i two = _mm_set1_epi8(2);
+    const __m128i six = _mm_set1_epi8(6);
+    const __m128i one = _mm_set1_epi8(1);
+
+    __m128i ge3 = _mm_cmpgt_epi8(sum, two);  // sum >= 3
+    __m128i le5 = _mm_cmpgt_epi8(six, sum);  // sum <= 5
 
     LOG("Exiting determine_state128");
-    return _mm_add_epi8(cardinalSums, diagonalSums);
+    return _mm_and_si128(_mm_and_si128(ge3, le5), one);
 }
 
-// See determine_state256
-__m128i determine_state128(__m128i neighbor_counts)
+/* Scalar version: compute next state for a single cell.
+ *
+ * Assumptions:
+ * - middle_arr points to the current cell
+ * - arr[-1] and arr[+1] must be valid
+ * - upper and lower rows must exist
+ */
+char determine_state1(
+    const char* lower_arr,
+    const char* middle_arr,
+    const char* upper_arr)
 {
-    __m128i two = _mm_set1_epi8(2);
-    __m128i six = _mm_set1_epi8(6);
+    char neighbors =
+        upper_arr[-1] + upper_arr[0] + upper_arr[1] +
+        middle_arr[-1]              + middle_arr[1] +
+        lower_arr[-1] + lower_arr[0] + lower_arr[1];
 
-    __m128i ge3 = _mm_cmpgt_epi8(neighbor_counts, two); // v > 2  → v >= 3
-    __m128i le5 = _mm_cmpgt_epi8(six, neighbor_counts); // 6 > v  → v <= 5
+    return (neighbors >= 3 && neighbors <= 5) ? (char)0x01 : (char)0x00;
+}
 
-    return _mm_and_si128(ge3, le5);
+/* 
+ * Safe scalar version: compute the next state for a single cell
+ * on a toroidal grid (wraps around left/right edges).
+ *
+ * grid: pointer to the grid structure
+ * row, col: coordinates of the cell
+ */
+char determine_state1_manual_rows(char* upper_row, char* middle_row, char* lower_row, int ncols, int col)
+{
+    int left  = (col == 0) ? ncols - 1 : col - 1;
+    int right = (col == ncols - 1) ? 0 : col + 1;
+
+    char neighbors =
+        upper_row[left]   + upper_row[col]   + upper_row[right] +
+        middle_row[left]                  + middle_row[right] +
+        lower_row[left]   + lower_row[col]   + lower_row[right];
+
+    return (neighbors >= 3 && neighbors <= 5) ? (char)0x01 : (char)0x00;
+}
+
+void calculate_row(
+    char* upper_row,
+    char* middle_row,
+    char* lower_row,
+    char* output_row,
+    int ncols,
+    int blocks_256,
+    int blocks_128,
+    int blocks_1
+) {
+    LOG("Processing manual row");
+
+    output_row[0] = determine_state1_manual_rows(
+        upper_row,
+        middle_row,
+        lower_row,
+        ncols,
+        0
+    );
+
+    output_row[ncols - 1] = determine_state1_manual_rows(
+        upper_row,
+        middle_row,
+        lower_row,
+        ncols,
+        ncols-1
+    );
+
+    upper_row  += 1;
+    middle_row += 1;
+    lower_row  += 1;
+    output_row += 1;
+
+
+    LOG("Processing 256-bit blocks");
+    for(int i = 0; i < blocks_256; i++) {
+        _mm256_storeu_si256(
+            (__m256i*)output_row, 
+            determine_state256(
+                lower_row,
+                middle_row,
+                upper_row
+            )
+        );
+        upper_row += 32;
+        middle_row += 32;
+        lower_row += 32;
+        output_row += 32;
+    }
+
+    LOG("Processing 128-bit blocks");
+    for(int i = 0; i < blocks_128; i++) {
+        _mm_storeu_si128(
+            (__m128i*)output_row, 
+            determine_state128(
+                lower_row,
+                middle_row,
+                upper_row
+            )
+        );
+        upper_row += 16;
+        middle_row += 16;
+        lower_row += 16;
+        output_row += 16;
+    }
+
+    LOG("Processing remaining scalar cells");
+    for(int i = 0; i < blocks_1; i++) {
+        *output_row = determine_state1(
+            lower_row,
+            middle_row,
+            upper_row
+        );
+        upper_row += 1;
+        middle_row += 1;
+        lower_row += 1;
+        output_row += 1;
+    }
 }
