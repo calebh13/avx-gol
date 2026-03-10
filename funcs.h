@@ -48,14 +48,14 @@ static __m128i determine_state128(
     const char* middle_arr, 
     const char* upper_arr);
 
-char determine_state1(
+static char determine_state1(
     const char* lower_arr,
     const char* middle_arr,
     const char* upper_arr);
 
-char determine_state1_manual_rows(char* upper_row, char* middle_row, char* lower_row, int ncols, int col);
+static char determine_state1_manual_rows(char* upper_row, char* middle_row, char* lower_row, int ncols, int col);
 
-void calculate_row(
+static void calculate_row(
     char* upper_row,
     char* middle_row,
     char* lower_row,
