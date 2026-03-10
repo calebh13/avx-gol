@@ -15,7 +15,7 @@ extern FILE* logfile;
 
 #define LOG(...) \
 do { \
-    if(!logfile){ \
+    if(logfile){ \
         fprintf(logfile, "p%d: ", rank); \
         fprintf(logfile, __VA_ARGS__); \
         fprintf(logfile, "\n"); \
