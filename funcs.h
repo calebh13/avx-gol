@@ -24,13 +24,14 @@ do { \
 } while(0)
 
 #define BIGPRIME 85935431U
-#define OUTFILE_FORMAT "p%dout"
+#define OUTFILE_FORMAT "p%dout.txt"
 
 // Opaque struct so caller cannot see internals
 typedef struct Grid Grid;
 
 Grid* init_grid(int n, int rows);
 void print_grid(const Grid* g, FILE* out);
+static void DisplayGoL(int n, int generation);
 static void scatter_seeds();
 void GenerateInitialGoL(Grid* local_grid);
 static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* send_req, MPI_Request* recv_req);

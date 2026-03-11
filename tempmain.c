@@ -21,6 +21,7 @@ int main(int argc, char** argv)
     sprintf(logname, "log_p%d.txt", rank);
     logfile = fopen(logname, "w");
 
+    // printf("\033[H\033[2J");
 
     if (argc >= 2) {
         n = atoi(argv[1]);
@@ -31,19 +32,19 @@ int main(int argc, char** argv)
         generations = atoi(argv[2]);
     }
 
-    if (rank == 0) {
-        printf("Grid size: %d x %d\n", rows, n);
-        printf("Generations: %d\n\n", generations);
-    }
+    // if (rank == 0) {
+    //     printf("Grid size: %d x %d\n", rows, n);
+    //     printf("Generations: %d\n\n", generations);
+    // }
 
     Grid* grid = init_grid(n, rows);
 
     GenerateInitialGoL(grid);
 
-    if (rank == 0) {
-        printf("Initial Grid:\n");
-        // print_grid(grid, NULL);
-    }
+    // if (rank == 0) {
+    //     printf("Initial Grid:\n");
+    //     print_grid(grid, NULL);
+    // }
 
     simulate(grid, generations);
     fclose(logfile);

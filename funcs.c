@@ -1,5 +1,11 @@
 #include "funcs.h"
 #include <mpi.h>
+#include <unistd.h>
+
+// If true, p0 will read each process's output file in order
+// and print the full matrix to stdout.
+// Should only be set for debugging.
+#define PRINT_FULL_MATRIX 0
 
 struct Grid {
     char** grid;
@@ -30,7 +36,6 @@ Grid* init_grid(int n, int rows)
 
 void print_grid(const Grid* g, FILE* out) {
     if (!out) out = stdout;  // default to stdout if NULL
-
     LOG("Entered Print_grid");
     for (size_t r = 0; r < g->rows; r++) {
         for (size_t c = 0; c < g->n; c++) {
@@ -39,7 +44,43 @@ void print_grid(const Grid* g, FILE* out) {
         fprintf(out, "\n");
     }
     fprintf(out, "\n");
+    fflush(out);
     LOG("Exiting Print_Grid");
+}
+
+// Reads every process's output file, and prints it to stdout.
+// This is REALLY SLOW, and should only be used for testing, since each output file
+// has all the generations so far in them.
+// For other purposes, use combine.py
+void DisplayGoL(int n, int generation)
+{
+    LOG("Enter print_output_files");
+
+    char filename[64];
+    size_t linesize = (n+1) * 2 * sizeof(char);
+    char* line = malloc(linesize);
+
+    for(int r = 0; r < p; r++) {
+        sprintf(filename, OUTFILE_FORMAT, r);
+        LOG("Reading %s", filename);
+        FILE* fp = fopen(filename, "r");
+        for(int i = 0; i < generation; i++) {
+            // We need to skip over all the previous generations
+            while (getline(&line, &linesize, fp) != -1) {
+                if (line[0] == '\n') break;
+            }
+        }
+        while (getline(&line, &linesize, fp) != -1) {
+            if (line[0] == '\n') continue;
+            printf("%s", line);
+        }
+        fflush(stdout);
+        fclose(fp);
+    }
+
+    free(line);
+    printf("\n");
+    LOG("Done print_output_files");
 }
 
 void scatter_seeds()
@@ -104,6 +145,7 @@ void free_grid(Grid* local_grid) {
 
     LOG("Exiting free_grid");
 }
+
 
 // User must call MPI_Wait on send_req and recv_req before attempting to use the relevant buffers
 // This is not critical for the send buffer (so long as it isn't freed), but is extremely important for the recv buffer
@@ -195,12 +237,22 @@ void simulate(Grid* local_grid, int g) {
     LOG("Initializing output grid and output file");
     Grid* output_grid = init_grid(local_grid->n, local_grid->rows);
 
-    char logname[64];
-    sprintf(logname, "out_p%d", rank);
-    FILE* outfile = fopen(logname, "w");
+    char outfile_name[64];
+    sprintf(outfile_name, OUTFILE_FORMAT, rank);
+    FILE* outfile = fopen(outfile_name, "w");
+    
+    LOG("Printing initial matrix");
+    print_grid(local_grid, outfile);
+    if (PRINT_FULL_MATRIX) {
+        // all processes must be done printing to their files
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (rank == 0) {
+            LOG("Printing all grids to stdout");
+            DisplayGoL(local_grid->n, 0);
+        }
+    }
 
-
-    for(int current_gen = 0; current_gen < g; current_gen++) {
+    for(int current_gen = 1; current_gen <= g; current_gen++) {
         MPI_Barrier(MPI_COMM_WORLD);
         LOG("Starting generation %d", current_gen);
 
@@ -313,15 +365,18 @@ void simulate(Grid* local_grid, int g) {
         local_grid = output_grid;
         output_grid = temp;
 
-        LOG("Printing current generation to file");
         print_grid(local_grid, outfile);
+        if (PRINT_FULL_MATRIX) {
+            LOG("PRINT_FULL_MATRIX is true");
+            // all processes must be done printing to their files
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (rank == 0) {
+                LOG("Printing all grids to stdout");
+                DisplayGoL(local_grid->n, current_gen);
+            }
+        }
 
         LOG("Finished generation %d", current_gen);
-    }
-
-    if (rank == 0) {
-        printf("Final Grid:\n");
-        //print_grid(output_grid, NULL);
     }
 
     LOG("Cleaning up resources");
@@ -381,7 +436,7 @@ __m256i determine_state256(const char* lower_arr, const char* middle_arr, const 
  * Returns 0x01 per byte if cell should be alive, otherwise 0x00.
  *
  * Must not be called on a boundary element.
- * Arrays must be length ≥ 18 and passed as arr + 1.
+ * Arrays must be length >= 18 and passed as arr + 1.
  */
 __m128i determine_state128(const char* lower_arr, const char* middle_arr, const char* upper_arr)
 {

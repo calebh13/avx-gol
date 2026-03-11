@@ -1,7 +1,7 @@
 import sys
 
-def combine_files(num_files, output_file="out"):
-    files = [open(f"out_p{i}", "r") for i in range(num_files)]
+def combine_files(num_files, output_file="out.txt"):
+    files = [open(f"p{i}out.txt", "r") for i in range(num_files)]
 
     try:
         with open(output_file, "w") as out:
@@ -36,9 +36,12 @@ def combine_files(num_files, output_file="out"):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python combine.py <num_files>")
+    if len(sys.argv) < 2:
+        print("Usage: python combine.py <num_files> {output_filename}")
         sys.exit(1)
 
     n = int(sys.argv[1])
-    combine_files(n)
+    outfile = "out"
+    if len(sys.argv) == 3:
+        outfile = sys.argv[2]
+    combine_files(n, outfile)
