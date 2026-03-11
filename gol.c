@@ -1,6 +1,5 @@
-#include "funcs.h"
+#include "gol.h"
 #include <mpi.h>
-#include <unistd.h>
 
 // If true, p0 will read each process's output file in order
 // and print the full matrix to stdout.
