@@ -32,19 +32,9 @@ int main(int argc, char** argv)
         generations = atoi(argv[2]);
     }
 
-    // if (rank == 0) {
-    //     printf("Grid size: %d x %d\n", rows, n);
-    //     printf("Generations: %d\n\n", generations);
-    // }
-
     Grid* grid = init_grid(n, rows);
 
     GenerateInitialGoL(grid);
-
-    // if (rank == 0) {
-    //     printf("Initial Grid:\n");
-    //     print_grid(grid, NULL);
-    // }
 
     simulate(grid, generations);
     fclose(logfile);
