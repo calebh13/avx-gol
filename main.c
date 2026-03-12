@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &p);
 
-    int n = 32768 * 2;
+    int n = 32768;
     int rows = n / p;
     int generations = 40;
 
@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
     );
 
     if (rank == 0) { 
-        printf("FORMAT:p,n,total runtime,avg time/gen,total comm time,total comp time\n");
+        //printf("FORMAT:p,n,total runtime,avg time/gen,total comm time,total comp time\n");
 
         double total_runtime_us = (end - start) * SEC_TO_US;
         double avg_gen_time_us = total_runtime_us / generations;
