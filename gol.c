@@ -5,6 +5,8 @@
 // Should only be set for debugging.
 #define PRINT_FULL_MATRIX 0
 
+double comm_time = 0;
+
 struct Grid {
     char** grid;
     size_t n;
@@ -76,6 +78,8 @@ void DisplayGoL(int n, int generation) {
 // Creates random grid seeds and sends them to each proc
 void scatter_seeds() {
     unsigned int seed;
+    double t0;
+
     if (rank == 0) {
         unsigned int *seeds = malloc(p * sizeof(unsigned int));
         srand(time(NULL));
@@ -83,10 +87,17 @@ void scatter_seeds() {
             seeds[i] = rand() % BIGPRIME + 1;
         }
 
+        t0 = MPI_Wtime();
         MPI_Scatter(seeds, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+        comm_time += MPI_Wtime() - t0;
+
         free(seeds);
     } else {
-        MPI_Scatter(NULL, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0,MPI_COMM_WORLD);
+
+        t0 = MPI_Wtime();
+        MPI_Scatter(NULL, 1, MPI_UNSIGNED, &seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+        comm_time += MPI_Wtime() - t0;
+
     }
 
     srand(seed);
@@ -119,6 +130,8 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
     int send_target = (rank + 1) % p;
     int recv_source = (rank + p - 1) % p;
 
+    double t0 = MPI_Wtime();
+
     MPI_Isend(
         local_grid->grid[local_grid->rows - 1],
         local_grid->n,
@@ -138,6 +151,8 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
         MPI_COMM_WORLD,
         recv_req
     );
+
+    comm_time += MPI_Wtime() - t0;
 }
 
 // User must call MPI_Wait on send_req and recv_req before attempting to use the relevant buffers
@@ -145,6 +160,8 @@ static void sendLowerRecvUpper(Grid* local_grid, char* upper_row, MPI_Request* s
 static void sendUpperRecvLower(Grid* local_grid, char* lower_row, MPI_Request* send_req, MPI_Request* recv_req) {
     int send_target = (rank + p - 1) % p;
     int recv_source = (rank + 1) % p;
+
+    double t0 = MPI_Wtime();
 
     MPI_Isend(
         local_grid->grid[0],
@@ -165,14 +182,18 @@ static void sendUpperRecvLower(Grid* local_grid, char* lower_row, MPI_Request* s
         MPI_COMM_WORLD,
         recv_req
     );
+
+    comm_time += MPI_Wtime() - t0;
 }
 
 // Main logic loop. Simulates g generations using local_grid as an input starting state //
-void simulate(Grid* local_grid, int g) {
+void simulate(Grid* local_grid, int g, int x) {
     assert(g >= 0);
 
-    int blocks_256 = (local_grid->n - 2) / 32;
-    int remainder = (local_grid->n - 2) % 32;
+    int blocks_512 = (local_grid->n - 2) / 64;
+    int remainder = (local_grid->n - 2) % 64;
+    int blocks_256 = remainder / 32;
+    remainder %= 32;
     int blocks_128 = remainder / 16;
     int blocks_1 = remainder % 16;
 
@@ -185,111 +206,68 @@ void simulate(Grid* local_grid, int g) {
     char outfile_name[64];
     sprintf(outfile_name, OUTFILE_FORMAT, rank);
     FILE* outfile = fopen(outfile_name, "w");
-    print_grid(local_grid, outfile);
 
-    if (PRINT_FULL_MATRIX) {
-        // all processes must be done printing to their files
-        MPI_Barrier(MPI_COMM_WORLD);
-        if (rank == 0) {
-            DisplayGoL(local_grid->n, 0);
+    if (x > 0) {
+        print_grid(local_grid, outfile);
+        if (PRINT_FULL_MATRIX) {
+            MPI_Barrier(MPI_COMM_WORLD);
+            if (rank == 0) {
+                DisplayGoL(local_grid->n, 0);
+            }
         }
     }
 
     for(int current_gen = 1; current_gen <= g; current_gen++) {
+        if(rank == 0){
+            printf("Gen: %d\n", current_gen);
+        }
         MPI_Barrier(MPI_COMM_WORLD);
 
         sendLowerRecvUpper(local_grid, upper_HALO, &lower_send, &upper_recv);
         sendUpperRecvLower(local_grid, lower_HALO, &upper_send, &lower_recv);
 
         for(int row = 1; row < local_grid->rows - 1; row++) {
-            char* upper_row = local_grid->grid[row-1] + 1;
-            char* middle_row = local_grid->grid[row] + 1;
-            char* lower_row = local_grid->grid[row + 1] + 1;
-            char* output_row = output_grid->grid[row] + 1;
-
-            output_grid->grid[row][0] = determine_state1_manual_rows(
+            calculate_row(
                 local_grid->grid[row - 1],
                 local_grid->grid[row],
                 local_grid->grid[row + 1],
+                output_grid->grid[row],
                 local_grid->n,
-                0
+                blocks_512,
+                blocks_256,
+                blocks_128,
+                blocks_1
             );
-
-            output_grid->grid[row][local_grid->n - 1] = determine_state1_manual_rows(
-                local_grid->grid[row - 1],
-                local_grid->grid[row],
-                local_grid->grid[row + 1],
-                local_grid->n,
-                local_grid->n - 1
-            );
-
-            for(int i = 0; i < blocks_256; i++) {
-                _mm256_storeu_si256(
-                    (__m256i*)output_row, 
-                    determine_state256(
-                        lower_row,
-                        middle_row,
-                        upper_row
-                    )
-                );
-                upper_row += 32;
-                middle_row += 32;
-                lower_row += 32;
-                output_row += 32;
-            }
-
-            for(int i = 0; i < blocks_128; i++) {
-                _mm_storeu_si128(
-                    (__m128i*)output_row, 
-                    determine_state128(
-                        lower_row,
-                        middle_row,
-                        upper_row
-                    )
-                );
-                upper_row += 16;
-                middle_row += 16;
-                lower_row += 16;
-                output_row += 16;
-            }
-
-            for(int i = 0; i < blocks_1; i++) {
-                *output_row = determine_state1(
-                    lower_row,
-                    middle_row,
-                    upper_row
-                );
-                upper_row += 1;
-                middle_row += 1;
-                lower_row += 1;
-                output_row += 1;
-            }
         }
+
+        double t0 = MPI_Wtime();
 
         MPI_Wait(&upper_send, MPI_STATUS_IGNORE);
         MPI_Wait(&lower_send, MPI_STATUS_IGNORE);
         MPI_Wait(&upper_recv, MPI_STATUS_IGNORE);
         MPI_Wait(&lower_recv, MPI_STATUS_IGNORE);
 
-        // Calculate top HALO row
+        comm_time += MPI_Wtime() - t0;
+
         calculate_row(
-            upper_HALO,        // received from the process above
-            local_grid->grid[0], // middle row (first row)
-            local_grid->grid[1], // lower row
+            upper_HALO,
+            local_grid->grid[0],
+            local_grid->grid[1],
             output_grid->grid[0],
             local_grid->n,
+            blocks_512,
             blocks_256,
             blocks_128,
             blocks_1
         );
 
-        // Calculate bottom HALO row
         calculate_row(
-            local_grid->grid[local_grid->rows-2], // upper row
-            local_grid->grid[local_grid->rows-1], // middle row (last row)
-            lower_HALO,                           // received from the process below
+            local_grid->grid[local_grid->rows-2],
+            local_grid->grid[local_grid->rows-1],
+            lower_HALO,
             output_grid->grid[local_grid->rows-1],
             local_grid->n,
+            blocks_512,
             blocks_256,
             blocks_128,
             blocks_1
@@ -299,12 +277,13 @@ void simulate(Grid* local_grid, int g) {
         local_grid = output_grid;
         output_grid = temp;
 
-        print_grid(local_grid, outfile);
-        if (PRINT_FULL_MATRIX) {
-            // all processes must be done printing to their files
-            MPI_Barrier(MPI_COMM_WORLD);
-            if (rank == 0) {
-                DisplayGoL(local_grid->n, current_gen);
+        if (x > 0 && current_gen % x == 0) {
+            print_grid(local_grid, outfile);
+            if (PRINT_FULL_MATRIX) {
+                MPI_Barrier(MPI_COMM_WORLD);
+                if (rank == 0) {
+                    DisplayGoL(local_grid->n, current_gen);
+                }
             }
         }
     }
@@ -314,6 +293,36 @@ void simulate(Grid* local_grid, int g) {
     free(lower_HALO);
     free_grid(output_grid);
     free_grid(local_grid);
+}
+
+/* Returns 0x01 per byte if cell should be alive, otherwise 0x00.
+ *
+ * Must not be called on a boundary element.
+ * Arrays must be length ≥ 66 and passed as arr + 1.
+ */
+__m512i determine_state512(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
+    __m512i sum = _mm512_setzero_si512();
+
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)upper_arr));
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)lower_arr));
+
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(middle_arr - 1)));
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(middle_arr + 1)));
+
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(upper_arr - 1)));
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(upper_arr + 1)));
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(lower_arr - 1)));
+    sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)(lower_arr + 1)));
+
+    const __m512i two = _mm512_set1_epi8(2);
+    const __m512i six = _mm512_set1_epi8(6);
+    const __m512i one = _mm512_set1_epi8(1);
+
+    __mmask64 ge3 = _mm512_cmpgt_epi8_mask(sum, two); // sum >= 3
+    __mmask64 le5 = _mm512_cmpgt_epi8_mask(six, sum); // sum <= 5
+    __mmask64 alive_mask = ge3 & le5;
+
+    return _mm512_maskz_mov_epi8(alive_mask, one);
 }
 
 /* Returns 0x01 per byte if cell should be alive, otherwise 0x00.
@@ -405,12 +414,15 @@ char determine_state1_manual_rows(char* upper_row, char* middle_row, char* lower
 }
 
 /* Manually calculates a full row and puts the resulting cell updates into output_row */
+#include <immintrin.h>
+
 void calculate_row(
     char* upper_row,
     char* middle_row,
     char* lower_row,
     char* output_row,
     int ncols,
+    int blocks_512,
     int blocks_256,
     int blocks_128,
     int blocks_1) {
@@ -428,7 +440,7 @@ void calculate_row(
         middle_row,
         lower_row,
         ncols,
-        ncols-1
+        ncols - 1
     );
 
     upper_row  += 1;
@@ -436,45 +448,64 @@ void calculate_row(
     lower_row  += 1;
     output_row += 1;
 
-    for(int i = 0; i < blocks_256; i++) {
+    for (int i = 0; i < blocks_512; i++) {
+        _mm512_storeu_si512(
+            (void*)output_row,
+            determine_state512(
+                lower_row,
+                middle_row,
+                upper_row
+            )
+        );
+
+        upper_row  += 64;
+        middle_row += 64;
+        lower_row  += 64;
+        output_row += 64;
+    }
+
+    for (int i = 0; i < blocks_256; i++) {
         _mm256_storeu_si256(
-            (__m256i*)output_row, 
+            (__m256i*)output_row,
             determine_state256(
                 lower_row,
                 middle_row,
                 upper_row
             )
         );
-        upper_row += 32;
+
+        upper_row  += 32;
         middle_row += 32;
-        lower_row += 32;
+        lower_row  += 32;
         output_row += 32;
     }
 
-    for(int i = 0; i < blocks_128; i++) {
+    for (int i = 0; i < blocks_128; i++) {
         _mm_storeu_si128(
-            (__m128i*)output_row, 
+            (__m128i*)output_row,
             determine_state128(
                 lower_row,
                 middle_row,
                 upper_row
             )
         );
-        upper_row += 16;
+
+        upper_row  += 16;
         middle_row += 16;
-        lower_row += 16;
+        lower_row  += 16;
         output_row += 16;
     }
 
-    for(int i = 0; i < blocks_1; i++) {
+    for (int i = 0; i < blocks_1; i++) {
         *output_row = determine_state1(
             lower_row,
             middle_row,
             upper_row
         );
-        upper_row += 1;
+
+        upper_row  += 1;
         middle_row += 1;
-        lower_row += 1;
+        lower_row  += 1;
         output_row += 1;
     }
 }
