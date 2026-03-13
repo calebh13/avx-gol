@@ -8,7 +8,7 @@ for p in "${P_VALUES[@]}"; do
 
         [ "$n" -le "$p" ] && continue
 
-        if [ "$p" -le 1 ]; then
+        if [ "$p" -le 16 ]; then
             NODES=1
         else
             NODES=2
