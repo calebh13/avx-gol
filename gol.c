@@ -186,7 +186,7 @@ static void sendUpperRecvLower(Grid* local_grid, char* lower_row, MPI_Request* s
     comm_time += MPI_Wtime() - t0;
 }
 
-// Main logic loop. Simulates g generations using local_grid as an input starting state //
+// Main logic loop. Simulates g generations using local_grid as an input starting state
 void simulate(Grid* local_grid, int g, int x) {
     assert(g >= 0);
 
@@ -298,10 +298,13 @@ void simulate(Grid* local_grid, int g, int x) {
 /* Returns 0x01 per byte if cell should be alive, otherwise 0x00.
  *
  * Must not be called on a boundary element.
- * Arrays must be length ≥ 66 and passed as arr + 1.
+ * Arrays must be length >= 66 and passed as arr + 1.
  */
 __m512i determine_state512(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     __m512i sum = _mm512_setzero_si512();
+
+    // Accumulate all the neighbor sums in `sum`.
+    // Each cell's corresponding neighbor sum value is an 8-bit packed integer in `sum`.
 
     sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)upper_arr));
     sum = _mm512_add_epi8(sum, _mm512_loadu_si512((const void*)lower_arr));
@@ -320,7 +323,7 @@ __m512i determine_state512(const char* lower_arr, const char* middle_arr, const 
 
     __mmask64 ge3 = _mm512_cmpgt_epi8_mask(sum, two); // sum >= 3
     __mmask64 le5 = _mm512_cmpgt_epi8_mask(six, sum); // sum <= 5
-    __mmask64 alive_mask = ge3 & le5;
+    __mmask64 alive_mask = ge3 & le5; // alive IFF 3 <= neighbor count <= 5
 
     return _mm512_maskz_mov_epi8(alive_mask, one);
 }
@@ -328,7 +331,7 @@ __m512i determine_state512(const char* lower_arr, const char* middle_arr, const 
 /* Returns 0x01 per byte if cell should be alive, otherwise 0x00.
  *
  * Must not be called on a boundary element.
- * Arrays must be length ≥ 34 and passed as arr + 1. */
+ * Arrays must be length >= 34 and passed as arr + 1. */
 __m256i determine_state256(const char* lower_arr, const char* middle_arr, const char* upper_arr) {
     __m256i sum = _mm256_setzero_si256();
 
