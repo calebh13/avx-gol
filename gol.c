@@ -414,8 +414,6 @@ char determine_state1_manual_rows(char* upper_row, char* middle_row, char* lower
 }
 
 /* Manually calculates a full row and puts the resulting cell updates into output_row */
-#include <immintrin.h>
-
 void calculate_row(
     char* upper_row,
     char* middle_row,
